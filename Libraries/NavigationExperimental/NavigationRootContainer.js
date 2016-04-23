@@ -41,7 +41,7 @@ type Props = {
    * events, and use this mapper to convert URIs into actions that your app can
    * handle
    */
-  linkingActionMap: ?((uri: string) => NavigationAction),
+  linkingActionMap: ?((uri: ?string) => NavigationAction),
 
   /*
    * Provide this key, and the container will store the navigation state in
@@ -95,6 +95,9 @@ class NavigationRootContainer extends React.Component<any, Props, State> {
     onNavigate: PropTypes.func,
   };
 
+
+  static getBackAction = getBackAction;
+
   constructor(props: Props) {
     super(props);
 
@@ -108,12 +111,12 @@ class NavigationRootContainer extends React.Component<any, Props, State> {
   }
 
   componentWillMount(): void {
-    this.handleNavigation = this.handleNavigation.bind(this);
-    this._handleOpenURLEvent = this._handleOpenURLEvent.bind(this);
+    (this: any).handleNavigation = this.handleNavigation.bind(this);
+    (this: any)._handleOpenURLEvent = this._handleOpenURLEvent.bind(this);
   }
 
   componentDidMount(): void {
-    if (this.props.LinkingActionMap) {
+    if (this.props.linkingActionMap) {
       Linking.getInitialURL().then(this._handleOpenURL.bind(this));
       Platform.OS === 'ios' && Linking.addEventListener('url', this._handleOpenURLEvent);
     }
@@ -121,6 +124,7 @@ class NavigationRootContainer extends React.Component<any, Props, State> {
       AsyncStorage.getItem(this.props.persistenceKey, (err, storedString) => {
         if (err || !storedString) {
           this.setState({
+            // $FlowFixMe - navState is missing properties :(
             navState: this.props.reducer(null, this.props.initialAction),
           });
           return;
@@ -143,10 +147,10 @@ class NavigationRootContainer extends React.Component<any, Props, State> {
   }
 
   _handleOpenURL(url: ?string): void {
-    if (!this.props.LinkingActionMap) {
+    if (!this.props.linkingActionMap) {
       return;
     }
-    const action = this.props.LinkingActionMap(url);
+    const action = this.props.linkingActionMap(url);
     if (action) {
       this.handleNavigation(action);
     }
@@ -164,6 +168,7 @@ class NavigationRootContainer extends React.Component<any, Props, State> {
       return false;
     }
     this.setState({
+      // $FlowFixMe - navState is missing properties :(
       navState,
     });
 
@@ -182,7 +187,5 @@ class NavigationRootContainer extends React.Component<any, Props, State> {
     return navigation;
   }
 }
-
-NavigationRootContainer.getBackAction = getBackAction;
 
 module.exports = NavigationRootContainer;

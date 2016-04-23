@@ -82,7 +82,7 @@ type AnimationConfig = {
 class Animation {
   __active: bool;
   __isInteraction: bool;
-  __nativeTag: number;
+  __nativeId: number;
   __onEnd: ?EndCallback;
   start(
     fromValue: number,
@@ -91,7 +91,11 @@ class Animation {
     previousAnimation: ?Animation,
     animatedValue: AnimatedValue
   ): void {}
-  stop(): void {}
+  stop(): void {
+    if (this.__nativeId) {
+      NativeAnimatedAPI.stopAnimation(this.__nativeId);
+    }
+  }
   _getNativeAnimationConfig(): any {
     // Subclasses that have corresponding animation implementation done in native
     // should override this method
@@ -105,9 +109,9 @@ class Animation {
   }
   __startNativeAnimation(animatedValue: AnimatedValue): void {
     animatedValue.__makeNative();
-    this.__nativeTag = NativeAnimatedHelper.generateNewAnimationTag();
+    this.__nativeId = NativeAnimatedHelper.generateNewAnimationId();
     NativeAnimatedAPI.startAnimatingNode(
-      this.__nativeTag,
+      this.__nativeId,
       animatedValue.__getNativeTag(),
       this._getNativeAnimationConfig(),
       this.__debouncedOnEnd.bind(this)
@@ -311,6 +315,7 @@ class TimingAnimation extends Animation {
   }
 
   stop(): void {
+    super.stop();
     this.__active = false;
     clearTimeout(this._timeout);
     window.cancelAnimationFrame(this._animationFrame);
@@ -381,6 +386,7 @@ class DecayAnimation extends Animation {
   }
 
   stop(): void {
+    super.stop();
     this.__active = false;
     window.cancelAnimationFrame(this._animationFrame);
     this.__debouncedOnEnd({finished: false});
@@ -595,6 +601,7 @@ class SpringAnimation extends Animation {
   }
 
   stop(): void {
+    super.stop();
     this.__active = false;
     window.cancelAnimationFrame(this._animationFrame);
     this.__debouncedOnEnd({finished: false});
@@ -952,6 +959,12 @@ class AnimatedAddition extends AnimatedWithChildren {
     this._b = typeof b === 'number' ? new AnimatedValue(b) : b;
   }
 
+  __makeNative() {
+    super.__makeNative();
+    this._a.__makeNative();
+    this._b.__makeNative();
+  }
+
   __getValue(): number {
     return this._a.__getValue() + this._b.__getValue();
   }
@@ -968,6 +981,14 @@ class AnimatedAddition extends AnimatedWithChildren {
   __detach(): void {
     this._a.__removeChild(this);
     this._b.__removeChild(this);
+    super.__detach();
+  }
+
+  __getNativeConfig(): any {
+    return {
+      type: 'addition',
+      input: [this._a.__getNativeTag(), this._b.__getNativeTag()],
+    };
   }
 }
 
@@ -979,6 +1000,12 @@ class AnimatedMultiplication extends AnimatedWithChildren {
     super();
     this._a = typeof a === 'number' ? new AnimatedValue(a) : a;
     this._b = typeof b === 'number' ? new AnimatedValue(b) : b;
+  }
+
+  __makeNative() {
+    super.__makeNative();
+    this._a.__makeNative();
+    this._b.__makeNative();
   }
 
   __getValue(): number {
@@ -997,6 +1024,14 @@ class AnimatedMultiplication extends AnimatedWithChildren {
   __detach(): void {
     this._a.__removeChild(this);
     this._b.__removeChild(this);
+    super.__detach();
+  }
+
+  __getNativeConfig(): any {
+    return {
+      type: 'multiplication',
+      input: [this._a.__getNativeTag(), this._b.__getNativeTag()],
+    };
   }
 }
 
@@ -1394,7 +1429,7 @@ function createAnimatedComponent(Component: any): any {
 
       for (var key in ViewStylePropTypes) {
         if (!Component.propTypes[key] && props[key] !== undefined) {
-          console.error(
+          console.warn(
             'You are setting the style `{ ' + key + ': ... }` as a prop. You ' +
             'should nest it in a style object. ' +
             'E.g. `{ style: { ' + key + ': ... } }`'
