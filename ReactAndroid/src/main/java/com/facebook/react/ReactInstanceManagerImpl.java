@@ -80,8 +80,8 @@ import static com.facebook.react.bridge.ReactMarkerConstants.PROCESS_PACKAGES_ST
 import static com.facebook.react.bridge.ReactMarkerConstants.RUN_JS_BUNDLE_START;
 
 /**
- * This class is managing instances of {@link CatalystInstance}. It expose a way to configure
- * catalyst instance using {@link ReactPackage} and keeps track of the lifecycle of that
+ * This class manages instances of {@link CatalystInstance}. It exposes a way to configure
+ * catalyst instances using {@link ReactPackage} and keeps track of the lifecycle of that
  * instance. It also sets up connection between the instance and developers support functionality
  * of the framework.
  *
@@ -629,6 +629,11 @@ import static com.facebook.react.bridge.ReactMarkerConstants.RUN_JS_BUNDLE_START
     return Assertions.assertNotNull(mSourceUrl);
   }
 
+  @Override
+  public @Nullable String getJSBundleFile() {
+    return mJSBundleFile;
+  }
+
   /**
    * Attach given {@param rootView} to a catalyst instance manager and start JS application using
    * JS module provided by {@link ReactRootView#getJSModuleName}. If the react context is currently
@@ -768,6 +773,7 @@ import static com.facebook.react.bridge.ReactMarkerConstants.RUN_JS_BUNDLE_START
 
     UIManagerModule uiManagerModule = catalystInstance.getNativeModule(UIManagerModule.class);
     int rootTag = uiManagerModule.addMeasuredRootView(rootView);
+    rootView.setRootViewTag(rootTag);
     @Nullable Bundle launchOptions = rootView.getLaunchOptions();
     WritableMap initialProps = launchOptions != null
         ? Arguments.fromBundle(launchOptions)
