@@ -13,6 +13,7 @@
 
 const assert = require('assert');
 const crypto = require('crypto');
+const debug = require('debug')('RNP:Bundler');
 const fs = require('fs');
 const Cache = require('../node-haste').Cache;
 const Transformer = require('../JSTransformer');
@@ -23,7 +24,7 @@ const ModuleTransport = require('../lib/ModuleTransport');
 const declareOpts = require('../lib/declareOpts');
 const imageSize = require('image-size');
 const path = require('path');
-const version = require('../../../../package.json').version;
+const version = require('../../../package.json').version;
 const denodeify = require('denodeify');
 const defaults = require('../../../defaults');
 
@@ -35,9 +36,11 @@ const {
   extname,
 } = require('path');
 
-import AssetServer from '../AssetServer';
-import Module from '../node-haste/Module';
-import ResolutionResponse from '../node-haste/DependencyGraph/ResolutionResponse';
+import type AssetServer from '../AssetServer';
+import type Module from '../node-haste/Module';
+import type ResolutionResponse from '../node-haste/DependencyGraph/ResolutionResponse';
+import type {Options as TransformOptions} from '../JSTransformer/worker/worker';
+import type {Reporter} from '../lib/reporting';
 
 export type GetTransformOptions<T> = (
   string,
@@ -53,7 +56,6 @@ const {
   createActionStartEntry,
   createActionEndEntry,
   log,
-  print,
 } = require('../Logger');
 
 const validateOpts = declareOpts({
@@ -112,6 +114,9 @@ const validateOpts = declareOpts({
     type: 'boolean',
     default: false,
   },
+  reporter: {
+    type: 'object',
+  },
 });
 
 const assetPropertyBlacklist = new Set([
@@ -121,21 +126,22 @@ const assetPropertyBlacklist = new Set([
 ]);
 
 type Options = {
-  projectRoots: Array<string>,
+  allowBundleUpdates: boolean,
+  assetExts: Array<string>,
+  assetServer: AssetServer,
   blacklistRE: RegExp,
-  moduleFormat: string,
-  polyfillModuleNames: Array<string>,
   cacheVersion: string,
+  extraNodeModules: {},
+  getTransformOptions?: GetTransformOptions<*>,
+  moduleFormat: string,
+  platforms: Array<string>,
+  polyfillModuleNames: Array<string>,
+  projectRoots: Array<string>,
+  reporter: Reporter,
   resetCache: boolean,
   transformModulePath: string,
-  getTransformOptions?: GetTransformOptions<*>,
-  extraNodeModules: {},
-  assetExts: Array<string>,
-  platforms: Array<string>,
-  watch: boolean,
-  assetServer: AssetServer,
   transformTimeoutInterval: ?number,
-  allowBundleUpdates: boolean,
+  watch: boolean,
 };
 
 class Bundler {
@@ -189,6 +195,8 @@ class Bundler {
       cacheKeyParts.join('$'),
     ).digest('hex');
 
+    debug(`Using transform cache key "${transformCacheKey}"`);
+
     this._cache = new Cache({
       resetCache: opts.resetCache,
       cacheKey: transformCacheKey,
@@ -203,20 +211,21 @@ class Bundler {
       blacklistRE: opts.blacklistRE,
       cache: this._cache,
       extraNodeModules: opts.extraNodeModules,
-      watch: opts.watch,
       minifyCode: this._transformer.minify,
       moduleFormat: opts.moduleFormat,
       platforms: opts.platforms,
       polyfillModuleNames: opts.polyfillModuleNames,
       projectRoots: opts.projectRoots,
+      reporter: options.reporter,
       resetCache: opts.resetCache,
+      transformCacheKey,
       transformCode:
         (module, code, transformCodeOptions) => this._transformer.transformFile(
           module.path,
           code,
           transformCodeOptions,
         ),
-      transformCacheKey,
+      watch: opts.watch,
     });
 
     this._projectRoots = opts.projectRoots;
@@ -353,8 +362,6 @@ class Bundler {
           ? runBeforeMainModule
               .map(name => modulesByName[name])
               .filter(Boolean)
-              /* $FlowFixMe: looks like ResolutionResponse is monkey-patched
-               * with `getModuleId`. */
               .map(response.getModuleId)
           : undefined;
 
@@ -402,11 +409,11 @@ class Bundler {
     onProgress = noop,
   }: *) {
     const transformingFilesLogEntry =
-      print(log(createActionStartEntry({
+      log(createActionStartEntry({
         action_name: 'Transforming files',
         entry_point: entryFile,
         environment: dev ? 'dev' : 'prod',
-      })));
+      }));
 
     const modulesByName = Object.create(null);
 
@@ -426,7 +433,7 @@ class Bundler {
     return Promise.resolve(resolutionResponse).then(response => {
       bundle.setRamGroups(response.transformOptions.transform.ramGroups);
 
-      print(log(createActionEndEntry(transformingFilesLogEntry)));
+      log(createActionEndEntry(transformingFilesLogEntry));
       onResolutionResponse(response);
 
       // get entry file complete path (`entryFile` is relative to roots)
@@ -450,7 +457,8 @@ class Bundler {
           entryFilePath,
           assetPlugins,
           transformOptions: response.transformOptions,
-          getModuleId: response.getModuleId,
+          /* $FlowFixMe: `getModuleId` is monkey-patched */
+          getModuleId: (response.getModuleId: () => number),
           dependencyPairs: response.getResolvedDependencyPairs(module),
         }).then(transformed => {
           modulesByName[transformed.name] = module;
@@ -485,7 +493,7 @@ class Bundler {
     generateSourceMaps = false,
   }: {
     entryFile: string,
-    platform: ?string,
+    platform: string,
     dev?: boolean,
     minify?: boolean,
     hot?: boolean,
@@ -528,14 +536,14 @@ class Bundler {
     onProgress,
   }: {
     entryFile: string,
-    platform: ?string,
+    platform: string,
     dev?: boolean,
     minify?: boolean,
     hot?: boolean,
     recursive?: boolean,
     generateSourceMaps?: boolean,
     isolateModuleIDs?: boolean,
-    onProgress?: () => mixed,
+    onProgress?: ?(finishedModules: number, totalModules: number) => mixed,
   }) {
     return this.getTransformOptions(
       entryFile,
@@ -567,7 +575,7 @@ class Bundler {
   getOrderedDependencyPaths({ entryFile, dev, platform }: {
     entryFile: string,
     dev: boolean,
-    platform: ?string,
+    platform: string,
   }) {
     return this.getDependencies({entryFile, dev, platform}).then(
       ({ dependencies }) => {
@@ -608,7 +616,15 @@ class Bundler {
     getModuleId,
     dependencyPairs,
     assetPlugins,
-  }) {
+  }: {
+    module: Module,
+    bundle: Bundle,
+    entryFilePath: string,
+    transformOptions: TransformOptions,
+    getModuleId: () => number,
+    dependencyPairs: Array<[mixed, {path: string}]>,
+    assetPlugins: Array<string>,
+  }): Promise<ModuleTransport> {
     let moduleTransport;
     const moduleId = getModuleId(module);
 
@@ -660,18 +676,18 @@ class Bundler {
       'png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp', 'psd', 'svg', 'tiff'
     ].indexOf(extname(module.path).slice(1)) !== -1;
 
-    return Promise.all([
-      isImage ? sizeOf(module.path) : null,
-      this._assetServer.getAssetData(relPath, platform),
-    ]).then((res) => {
+    return this._assetServer.getAssetData(relPath, platform).then((assetData) => {
+      return Promise.all([isImage ? sizeOf(assetData.files[0]) : null, assetData]);
+    }).then((res) => {
       const dimensions = res[0];
       const assetData = res[1];
+      const scale = assetData.scales[0];
       const asset = {
         __packager_asset: true,
         fileSystemLocation: pathDirname(module.path),
         httpServerLocation: assetUrlPath,
-        width: dimensions ? dimensions.width / module.resolution : undefined,
-        height: dimensions ? dimensions.height / module.resolution : undefined,
+        width: dimensions ? dimensions.width / scale : undefined,
+        height: dimensions ? dimensions.height / scale : undefined,
         scales: assetData.scales,
         files: assetData.files,
         hash: assetData.hash,
@@ -718,9 +734,9 @@ class Bundler {
   }
 
   _generateAssetModule(
-    bundle,
-    module,
-    moduleId,
+    bundle: Bundle,
+    module: Module,
+    moduleId: number,
     assetPlugins: Array<string> = [],
     platform: ?string = null,
   ) {
@@ -745,7 +761,7 @@ class Bundler {
     mainModuleName: string,
     options: {
       dev?: boolean,
-      platform: ?string,
+      platform: string,
       hot?: boolean,
       generateSourceMaps?: boolean,
     },

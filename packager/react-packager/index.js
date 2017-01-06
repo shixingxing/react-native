@@ -40,7 +40,7 @@ function enableDebug() {
   // To enable debugging, we need to set our pattern or append it to any
   // existing pre-configured pattern to avoid disabling logging for
   // other packages
-  var debugPattern = 'ReactNativePackager:*';
+  var debugPattern = 'RNP:*';
   var existingPattern = debug.load();
   if (existingPattern) {
     debugPattern += ',' + existingPattern;
@@ -57,12 +57,22 @@ function createServer(options) {
 
   options = Object.assign({}, options);
   delete options.verbose;
+  if (options.reporter == null) {
+    // It's unsound to set-up the reporter here, but this allows backward
+    // compatibility.
+    var TerminalReporter = require('./src/lib/TerminalReporter');
+    options.reporter = new TerminalReporter();
+  }
   var Server = require('./src/Server');
   return new Server(options);
 }
 
 function createNonPersistentServer(options) {
-  Logger.disablePrinting();
+  if (options.reporter == null) {
+    // It's unsound to set-up the reporter here, but this allows backward
+    // compatibility.
+    options.reporter = require('./src/lib/reporting').nullReporter;
+  }
   options.watch = !options.nonPersistent;
   return createServer(options);
 }

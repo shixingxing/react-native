@@ -11,6 +11,7 @@
 
 'use strict';
 
+const debugRead = require('debug')('RNP:TransformCache:Read');
 const fs = require('fs');
 /**
  * We get the package "for free" with "write-file-atomic". MurmurHash3 is a
@@ -22,6 +23,7 @@ const jsonStableStringify = require('json-stable-stringify');
 const mkdirp = require('mkdirp');
 const path = require('path');
 const rimraf = require('rimraf');
+const terminal = require('../lib/terminal');
 const toFixedHex = require('./toFixedHex');
 const writeFileAtomicSync = require('write-file-atomic').sync;
 
@@ -29,6 +31,7 @@ const CACHE_NAME = 'react-native-packager-cache';
 
 type CacheFilePaths = {transformedCode: string, metadata: string};
 import type {Options as TransformOptions} from '../JSTransformer/worker/worker';
+import type {SourceMap} from './SourceMap';
 
 /**
  * If packager is running for two different directories, we don't want the
@@ -43,6 +46,10 @@ const getCacheDirPath = (function () {
       dirPath = path.join(
         require('os').tmpdir(),
         CACHE_NAME + '-' + imurmurhash(__dirname).result().toString(16),
+      );
+
+      require('debug')('RNP:TransformCache:Dir')(
+        `transform cache directory: ${dirPath}`
       );
     }
     return dirPath;
@@ -79,7 +86,7 @@ export type CachedResult = {
   code: string,
   dependencies: Array<string>,
   dependencyOffsets: Array<number>,
-  map?: ?{},
+  map?: ?SourceMap,
 };
 
 /**
@@ -188,18 +195,18 @@ const GARBAGE_COLLECTOR = new (class GarbageCollector {
     try {
       this._collectSync();
     } catch (error) {
-      console.error(error.stack);
-      console.error(
+      terminal.log(error.stack);
+      terminal.log(
         'Error: Cleaning up the cache folder failed. Continuing anyway.',
       );
-      console.error('The cache folder is: %s', getCacheDirPath());
+      terminal.log('The cache folder is: %s', getCacheDirPath());
     }
     this._lastCollected = Date.now();
   }
 
   _resetCache() {
     rimraf.sync(getCacheDirPath());
-    console.log('Warning: The transform cache was reset.');
+    terminal.log('Warning: The transform cache was reset.');
     this._cacheWasReset = true;
     this._lastCollected = Date.now();
   }
@@ -227,7 +234,7 @@ function readMetadataFileSync(
   cachedSourceHash: number,
   dependencies: Array<string>,
   dependencyOffsets: Array<number>,
-  sourceMap: ?{},
+  sourceMap: ?SourceMap,
 } {
   const metadataStr = fs.readFileSync(metadataFilePath, 'utf8');
   let metadata;
@@ -327,5 +334,10 @@ function readSync(props: ReadTransformProps): ?CachedResult {
 
 module.exports = {
   writeSync,
-  readSync,
+  readSync(props: ReadTransformProps): ?CachedResult {
+    const result = readSync(props);
+    const msg = result ? 'Cache hit: ' : 'Cache miss: ';
+    debugRead(msg + props.filePath);
+    return result;
+  }
 };
